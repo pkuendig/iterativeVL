@@ -3,17 +3,17 @@ require(GPvecchia) #V0.1.7
 
 set.seed(1)
 ################################################################################
-# GPVecchia: Estimation on subsample
+# GPVecchia: Estimation
 # Procedure from:
 # https://github.com/katzfuss-group/GPvecchia-Laplace/blob/master/VL_scripts/Modis_pipeline_VL.R
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-M_MYD05 <- readRDS("../../data_sets/MYD05/M_MYD05.rds")
+NOAA <- readRDS("../../data/NOAA/NOAA.rds")
 
 ####trend estimation############################################################
-trend_locations_train <- M_MYD05$M_locations_train
-trend_y <- M_MYD05$M_vapor_train
-trend_X_train <- M_MYD05$M_X_train
+trend_locations_train <- NOAA$coords_train
+trend_y <- NOAA$Y_train
+trend_X_train <- NOAA$X_train
 
 beta <- c(1, 0.001, 0.001)
 beta_prev <- c(0,0,0)
@@ -30,26 +30,27 @@ for(i in 1:100){
   }
   beta_prev <- beta
 }
+
 print(beta)
 
 #use beta from run
 beta <- matrix(beta)
-XB <- M_MYD05$M_X_train %*% beta
+XB <- NOAA$X_train %*% beta
 
 ####Shape estimation############################################################
-#shape estimation: maximize conditional likelihood. Integrated likelihood diverges.
+#shape estimation: maximize conditional likelihood
 
 update_a = function(a_init, covparms, vecchia.approx, vecchia.approx.IW, XB){
   a_prev =a_init
   for(i in 1:10){
-    posterior = calculate_posterior_VL(M_MYD05$M_vapor_train,
+    posterior = calculate_posterior_VL(NOAA$Y_train,
                                        vecchia.approx,
                                        likelihood_model="gamma",
                                        covparms=c(covparms[1], covparms[2]/sqrt(2*smoothness), smoothness),
                                        likparms = list("alpha"=a_prev),
                                        prior_mean = XB)
     mu = posterior$mean + XB
-    llh = function(a) -sum(-a*exp(-mu)*M_MYD05$M_vapor_train + (a-1)*log(M_MYD05$M_vapor_train)+a*log(a)-a*mu-log(gamma(a))) # concave in a and XB
+    llh = function(a) -sum(-a*exp(-mu)*NOAA$Y_train + (a-1)*log(NOAA$Y_train)+a*log(a)-a*mu-log(gamma(a))) # concave in a and XB
     param_est = optim(a_prev, llh, method = "Brent", lower = .01, upper = 1e2)
     a = param_est$par; print(a)
     if(abs(a-a_prev) < 1e-5) {print("convergence criteria met (fitting shape parameter)"); break}
@@ -67,7 +68,7 @@ fit_covparms = function(a, covparms_init, vecchia.approx, vecchia.approx.IW, XB)
     sprintf("Evaluating covparms = (%.4f %.4f %.4f)", covparms[1], covparms[2],covparms[3])
     default_lh_params = list("alpha"=a, "sigma"=sqrt(.1))
     # Perform inference on latent mean with Vecchia Laplace approximation
-    vll = vecchia_laplace_likelihood(M_MYD05$M_vapor_train,
+    vll = vecchia_laplace_likelihood(NOAA$Y_train,
                                      vecchia.approx,
                                      likelihood_model="gamma",
                                      covparms = covparms,
@@ -92,13 +93,12 @@ fit_covparms = function(a, covparms_init, vecchia.approx, vecchia.approx.IW, XB)
 m_rep = 20 #NN fix
 smoothness = 1.5 #smoothness, fix
 
-vecchia.approx = vecchia_specify(M_MYD05$M_locations_train, m=m_rep, cond.yz = "zy")
-vecchia.approx.IW = vecchia_specify(M_MYD05$M_locations_train, m=m_rep)
+vecchia.approx = vecchia_specify(NOAA$coords_train, m=m_rep, cond.yz = "zy")
+vecchia.approx.IW = vecchia_specify(NOAA$coords_train, m=m_rep)
 
 #Iterative method: estimate a, then covparms, then a again
-#Start:
-a_prev = 30
-covparms_prev = c(.3, 15) # sigma range
+a_prev = 1.8
+covparms_prev = c(1, 6.6) # sigma range
 
 iter_count = 1
 for(i in 1:5){
@@ -134,43 +134,41 @@ estimates$alpha <- a
 estimates$cov_pars <- c(covparms[1], covparms[2]/sqrt(2*smoothness), smoothness) #sigma, range, smoothness
 estimates$betas <- beta
 
-L_MYD05 <- readRDS("../../data_sets/MYD05/L_MYD05.rds")
+X_testB <- NOAA$X_test %*% beta
 
-L_X_train_betas <- c(L_MYD05$L_X_train %*% estimates$betas)
-L_X_test_betas <- c(L_MYD05$L_X_test %*% estimates$betas)
-
-vecchia.approx <- vecchia_specify(L_MYD05$L_locations_train, m=NN, cond.yz = "zy")
+vecchia.approx <- vecchia_specify(NOAA$coords_train, m=NN, cond.yz = "zy")
 default_lh_params <- list("alpha"= estimates$alpha, "sigma"=sqrt(.1)) #alpha = shape
-post_zy <- calculate_posterior_VL(L_MYD05$L_vapor_train, vecchia.approx, "gamma", estimates$cov_pars, 
-                                  likparms = default_lh_params, prior_mean = L_X_train_betas)
-vecchia.approx.train.test <- vecchia_specify(L_MYD05$L_locations_train, m=NN, locs.pred=L_MYD05$L_locations_test)
-preds_test <- vecchia_laplace_prediction(post_zy, vecchia.approx.train.test, estimates$cov_pars, pred.mean = L_X_test_betas)
+post_zy <- calculate_posterior_VL(NOAA$Y_train, vecchia.approx, "gamma", estimates$cov_pars, 
+                                  likparms = default_lh_params, prior_mean = XB)
+vecchia.approx.train.test <- vecchia_specify(NOAA$coords_train, m=NN, locs.pred=NOAA$coords_test)
+preds_test <- vecchia_laplace_prediction(post_zy, vecchia.approx.train.test, estimates$cov_pars, pred.mean = X_testB)
 
 #RMSE: Response Prediction
 pred_response_mu <- exp(preds_test$mu.pred+1/2*preds_test$var.pred)
-RMSE <- sqrt(mean((pred_response_mu-L_MYD05$L_vapor_test)^2))
+RMSE <- sqrt(mean((pred_response_mu-NOAA$Y_test)^2))
 
 #CRPS: Latent Prediction
 pred_latent_mu <- preds_test$mu.pred
 pred_latent_sd <- sqrt(pmax(preds_test$var.pred, 0)) #as in Modis_pipeline_VL.R
 
 n_samples <- 100 #number of samples
-sample_mat = matrix(0, ncol=n_samples, nrow = length(L_MYD05$L_vapor_test))
+sample_mat = matrix(0, ncol=n_samples, nrow = length(NOAA$Y_test))
 
 set.seed(1)
 for(s in 1:n_samples){
-  sample_latent_mu = rnorm(n = length(L_MYD05$L_vapor_test), mean = pred_latent_mu, sd = pred_latent_sd)
+  sample_latent_mu = rnorm(n = length(NOAA$Y_test), mean = pred_latent_mu, sd = pred_latent_sd)
   sample_response_mean = exp(sample_latent_mu)
-  sample_mat[,s]= rgamma(length(L_MYD05$L_vapor_test), shape = estimates$alpha, rate = estimates$alpha/sample_response_mean)
+  sample_mat[,s]= rgamma(length(NOAA$Y_test), shape = estimates$alpha, rate = estimates$alpha/sample_response_mean)
 }
-CRPS <- mean(scoringRules::crps_sample(y = L_MYD05$L_vapor_test, dat = sample_mat))
+CRPS <- mean(scoringRules::crps_sample(y = NOAA$Y_test, dat = sample_mat))
 
 #Response variance
 pred_response_var <- exp(2*preds_test$mu.pred+2*preds_test$var.pred)/estimates$alpha +
   (exp(preds_test$var.pred)-1)*exp(2*preds_test$mu.pred+preds_test$var.pred)
 
+################################################################################
 saveRDS(list(estimates=estimates,
              pred_response_mu=pred_response_mu,
              pred_response_var=pred_response_var,
              RMSE=RMSE,
-             CRPS=CRPS), "./data/GPVecchia.rds")
+             CRPS=CRPS), "./GPVecchia.rds")

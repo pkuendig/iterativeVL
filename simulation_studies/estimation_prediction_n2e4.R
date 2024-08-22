@@ -1,14 +1,13 @@
 ################################################################################
-# Estimation and prediction
-# Simulate 100 datasets
-# Compare models: Cholesky-VL | Iterative-VL | GPVeccia (V0.1.7)
+# Estimation and prediction on 100 simulated data sets with n=n_p=2e4
+# Considered models: Cholesky-VL | Iterative-VL | GPVeccia (v0.1.7)
 ################################################################################
 
 library(gpboost)
 library(GPvecchia)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-source("./../data_sets/simulated/make_data.R")
+source("./../data/simulated/make_data.R")
 
 n <- 20000
 n_rep <- 100
@@ -96,10 +95,6 @@ for(r in 1:n_rep){
   results_VL$negLL_at_true_covpars[i] <- model_VL$neg_log_likelihood(cov_pars=true_covpars, y=y_train)
   
   ##Iterative Veccia-Laplace####################################################
-  # cg_delta_conv = 1e-2
-  # num_rand_vec_trace = 50
-  # cg_preconditioner_type = "Sigma_inv_plus_BtWB"
-  # nsim_var_pred = 2000 
   
   ##Estimation
   model_iterative_VL <- GPModel(gp_coords = coords_train,
@@ -146,7 +141,9 @@ for(r in 1:n_rep){
   vecchia.approx.IW <- vecchia_specify(coords_train, m=NN) #for integrated likelihood
   
   GPVecchia_mll <- function(cov_pars){
-    covparms <- c(exp(cov_pars[1]), exp(cov_pars[2])/sqrt(2*1.5), 1.5) #sigma^2, range, smoothness -> range is divided by sqrt(2*smoothness) such that Matern covariance is identical with GPModel
+    #sigma^2, range, smoothness 
+    #range is divided by sqrt(2*smoothness) such that Matern covariance is identical with GPModel
+    covparms <- c(exp(cov_pars[1]), exp(cov_pars[2])/sqrt(2*1.5), 1.5)
     
     n_mll <- tryCatch({
       -vecchia_laplace_likelihood(y_train,
@@ -166,7 +163,7 @@ for(r in 1:n_rep){
   }
   
   results_GPVecchia$time_estimation[i] <- system.time({
-    opt <- optim(par = log(init_cov_pars), fn = GPVecchia_mll, method = "Nelder-Mead", #"BFGS" faster than "Nelder-Mead" but can't handle the discontinuity if Inf is returned when error occurs: "non-finite finite-difference value [1]"
+    opt <- optim(par = log(init_cov_pars), fn = GPVecchia_mll, method = "Nelder-Mead",
                control = list("trace" = 4, "maxit" = 1000))})[3]
   
   final_covparms <- c(exp(opt$par[1]), exp(opt$par[2])/sqrt(2*1.5), 1.5)
@@ -193,8 +190,110 @@ for(r in 1:n_rep){
   
   #############################################################################
   i <- i + 1
-  saveRDS(list(results_VL = results_VL,
-               results_iterative_VL = results_iterative_VL,
-               results_GPVecchia = results_GPVecchia), "./data/estimation_prediction_n2e4.rds")
   gc()
 }
+
+################################################################################
+# Plotting
+################################################################################
+library(ggplot2)
+library(grid)
+
+results_VL$model <- "Cholesky-VL"
+results_iterative_VL$model <- "Iterative-VL"
+results_GPVecchia$model <- "GPVecchia"
+
+results <- rbind(results_VL,
+                 results_iterative_VL,
+                 results_GPVecchia[,-c(9)])
+results$model <- factor(results$model, levels = c("Cholesky-VL", "Iterative-VL", "GPVecchia"), ordered=TRUE)
+
+##Log-likelihood relative to Cholesky-VL########################################
+results$relative_L[results$model=="Cholesky-VL"] <- NA
+results$relative_L[results$model=="Iterative-VL"] <- 
+  results$negLL_at_true_covpars[results$model=="Iterative-VL"] / results$negLL_at_true_covpars[results$model=="Cholesky-VL"]
+results$relative_L[results$model=="GPVecchia"] <- 
+  results$negLL_at_true_covpars[results$model=="GPVecchia"] / results$negLL_at_true_covpars[results$model=="Cholesky-VL"]
+
+ggplot(results[results$model!="Cholesky-VL", ], aes(x=model, y=relative_L)) + 
+  geom_hline(yintercept=1, linetype="dashed") + geom_boxplot() + 
+  ylab("relative log-likelihood") + xlab("") + theme_bw() + 
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE)
+
+##Parameter estimates###########################################################
+p_var <- ggplot(results, aes(x=model, y=sigma2)) + 
+  geom_hline(yintercept=sigma2_true, linetype="dashed") + geom_boxplot() +
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE) + 
+  ylab(expression(sigma[1]^2))+ xlab("") + theme_bw()
+
+p_range <- ggplot(results, aes(x=model, y=rho)) + 
+  geom_hline(yintercept=rho_true, linetype="dashed") + geom_boxplot() +
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE) +
+  xlab("") + ylab(expression(rho)) + theme_bw()
+
+grid.newpage()
+grid.draw(cbind(ggplotGrob(p_var), ggplotGrob(p_range), size = "last"))
+
+##Prediction accuracy###########################################################
+#RMSE
+ggplot(results, aes(x=model, y=RMSE_latent_mu)) + geom_boxplot() +
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE) + 
+  ylab("RMSE") + theme_bw() + xlab("")
+
+#log-score
+ggplot(results[results$model!="GPVecchia", ], aes(x=model, y=log_score)) + geom_boxplot() +
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE) + 
+  xlab("") + ylab("LS") + theme_bw()
+
+################################################################################
+# Results for tables
+################################################################################
+
+##Parameter estimates###########################################################
+
+##RMSE sigma^2
+cat("GPVecchia: ", round(sqrt(mean((results_GPVecchia$sigma2 - sigma2_true)^2)), digits = 4))
+cat("Cholesky-VL: ", round(sqrt(mean((results_VL$sigma2 - sigma2_true)^2)), digits = 4))
+cat("Iterative-VL: ", round(sqrt(mean((results_iterative_VL$sigma2 - sigma2_true)^2)), digits = 4))
+
+##RMSE rho
+cat("GPVecchia: ", round(sqrt(mean((results_GPVecchia$rho - rho_true)^2)), digits = 4))
+cat("Cholesky-VL: ", round(sqrt(mean((results_VL$rho - rho_true)^2)), digits = 4))
+cat("Iterative-VL: ", round(sqrt(mean((results_iterative_VL$rho - rho_true)^2)), digits = 4))
+
+##Bias sigma^2
+cat("GPVecchia: ", round(mean(results_GPVecchia$sigma2) - sigma2_true, digits = 4))
+cat("Cholesky-VL: ", round(mean(results_VL$sigma2) - sigma2_true, digits = 4))
+cat("Iterative-VL: ", round(mean(results_iterative_VL$sigma2) - sigma2_true, digits = 4))
+
+##Bias rho
+cat("GPVecchia: ", round(mean(results_GPVecchia$rho) - rho_true, digits = 4))
+cat("Cholesky-VL: ", round(mean(results_VL$rho) - rho_true, digits = 4))
+cat("Iterative-VL: ", round(mean(results_iterative_VL$rho) - rho_true, digits = 4))
+
+##Prediction accuracy###########################################################
+
+##Mean RMSE
+cat("GPVecchia: ", round(mean(results_GPVecchia$RMSE_latent_mu), digits = 4))
+cat("Cholesky-VL: ", round(mean(results_VL$RMSE_latent_mu), digits = 4))
+cat("Iterative-VL: ", round(mean(results_iterative_VL$RMSE_latent_mu), digits = 4))
+
+##Mean log-score
+#cat("GPVecchia: ", round(mean(results_GPVecchia$log_score, na.rm=TRUE), digits = 4))
+cat("Cholesky-VL: ", round(mean(results_VL$log_score), digits = 4))
+cat("Iterative-VL: ", round(mean(results_iterative_VL$log_score), digits = 4))
+
+##SD mean RMSE
+cat("GPVeccia: ", round(sqrt(mean((results_GPVecchia$RMSE_latent_mu - mean(results_GPVecchia$RMSE_latent_mu))^2))/sqrt(length(results_GPVecchia$RMSE_latent_mu)), digits=4))
+cat("Cholesky-VL: ", round(sqrt(mean((results_VL$RMSE_latent_mu - mean(results_VL$RMSE_latent_mu))^2))/sqrt(length(results_VL$RMSE_latent_mu)), digits=4))
+cat("Iterative-VL: ", round(sqrt(mean((results_iterative_VL$RMSE_latent_mu - mean(results_iterative_VL$RMSE_latent_mu))^2))/sqrt(length(results_iterative_VL$RMSE_latent_mu)), digits=4))
+
+##SD mean log-score
+cat("Cholesky-VL: ", round(sqrt(mean((results_VL$log_score - mean(results_VL$log_score))^2))/sqrt(length(results_VL$log_score)), digits=4))
+cat("Iterative-VL: ", round(sqrt(mean((results_iterative_VL$log_score - mean(results_iterative_VL$log_score))^2))/sqrt(length(results_iterative_VL$log_score)), digits=4))
+
+##Runtime estimation############################################################
+
+cat("GPVecchia: ", round(mean(results_GPVecchia$time_estimation), digits = 1))
+cat("Cholesky-VL: ", round(mean(results_VL$time_estimation), digits = 1))
+cat("Iterative-VL: ", round(mean(results_iterative_VL$time_estimation), digits = 1))

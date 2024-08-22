@@ -1,7 +1,11 @@
+################################################################################
+# Parameter estimation for different sample sizes with iterative Vecchia-Laplace
+################################################################################
+
 library(gpboost)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-source("./../../data_sets/simulated/make_data.R")
+source("./../data/simulated/make_data.R")
 
 N <- c(500,1000,2000,5000,10000,20000,50000)
 n_rep <- 100
@@ -11,8 +15,8 @@ true_covpars <- c(sigma2_true, rho_true)
 NN <- 20 
 
 res_cols <- c("n", "sigma2", "rho", "num_optim_iter")
-results_Sigma_inv_plus_BtWB <- data.frame(matrix(nrow=length(N)*n_rep, ncol = length(res_cols)))
-colnames(results_Sigma_inv_plus_BtWB) <- res_cols
+results <- data.frame(matrix(nrow=length(N)*n_rep, ncol = length(res_cols)))
+colnames(results) <- res_cols
 
 i <- 1
 for(n in 1:length(N)){
@@ -40,7 +44,7 @@ for(n in 1:length(N)){
     ############################################################################
     
     ##Estimation
-    model_Sigma_inv_plus_BtWB <- GPModel(gp_coords = coords_train,
+    model_iterativeVL <- GPModel(gp_coords = coords_train,
                                          cov_function = "matern",
                                          cov_fct_shape=1.5,
                                          likelihood="bernoulli_logit",
@@ -49,21 +53,39 @@ for(n in 1:length(N)){
                                          vecchia_ordering = "random",
                                          num_neighbors=NN)
     
-    model_Sigma_inv_plus_BtWB$set_optim_params(params = list(maxit=1000,
+    model_iterativeVL$set_optim_params(params = list(maxit=1000,
                                                             trace=TRUE,
                                                             cg_preconditioner_type = "Sigma_inv_plus_BtWB",
                                                             seed_rand_vec_trace = i))
     
-    model_Sigma_inv_plus_BtWB$fit(y=y_train)
+    model_iterativeVL$fit(y=y_train)
     
-    results_Sigma_inv_plus_BtWB$n[i] <- N[n]
-    results_Sigma_inv_plus_BtWB$num_optim_iter[i] <- model_Sigma_inv_plus_BtWB$get_num_optim_iter()
-    results_Sigma_inv_plus_BtWB$sigma2[i] <- model_Sigma_inv_plus_BtWB$get_cov_pars()[1]
-    results_Sigma_inv_plus_BtWB$rho[i] <- model_Sigma_inv_plus_BtWB$get_cov_pars()[2]
+    results$n[i] <- N[n]
+    results$num_optim_iter[i] <- model_iterativeVL$get_num_optim_iter()
+    results$sigma2[i] <- model_iterativeVL$get_cov_pars()[1]
+    results$rho[i] <- model_iterativeVL$get_cov_pars()[2]
     
     i <- i + 1
     print(i)
-    saveRDS(results_Sigma_inv_plus_BtWB, "./data/bias_analysis.rds")
     gc()
   }
 }
+
+############################################################################
+# Plotting
+############################################################################
+require(ggplot2)
+
+options(scipen = 999)
+results$n <- as.factor(results$n)
+
+#sigma^2 with Errorbar
+ggplot(results, aes(x=n, y=sigma2, group=n)) +
+  stat_summary(fun = mean,
+               geom = "errorbar",
+               linewidth=0.5,
+               width = 0.8,
+               fun.max = function(x) mean(x) + 2*sd(x) / sqrt(length(x)),
+               fun.min = function(x) mean(x) - 2*sd(x) / sqrt(length(x))) + 
+  stat_summary(fun=mean, colour="darkred", geom="point",shape=18, size=3, show.legend = FALSE)  +
+  theme_bw() + ylab(expression(sigma[1]^2)) + geom_hline(yintercept=sigma2_true, linetype="dashed")

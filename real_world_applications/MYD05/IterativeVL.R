@@ -2,20 +2,17 @@ library(fields)
 library(gpboost)
 
 ################################################################################
-# Iterative-VL: Estimation on training data set with fixed shape 
+# Iterative-VL: Estimation on subsample
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-res_n5e4 <- readRDS("./data/IterativeVL.rds")
-L_MYD05 <- readRDS("../../data_sets/MYD05/L_MYD05.rds")
+M_MYD05 <- readRDS("../../data/MYD05/M_MYD05.rds")
 
 #glm - for initial fixed effects
-glm_train <- glm(L_MYD05$L_vapor_train ~ -1 + L_MYD05$L_X_train, family = Gamma(link = "log"))
+glm_train <- glm(M_MYD05$M_vapor_train ~ -1 + M_MYD05$M_X_train, family = Gamma(link = "log"))
 betas_init <- glm_train$coefficients
 
-(init_shape <- res_n5e4$estimates$alpha) #optimal from estimation on subsample
-
 ##Estimation
-gp_model <- GPModel(gp_coords = L_MYD05$L_locations_train,
+gp_model <- GPModel(gp_coords = M_MYD05$M_locations_train,
                     cov_function = "matern",
                     likelihood="gamma",
                     cov_fct_shape=1.5,
@@ -26,24 +23,23 @@ gp_model <- GPModel(gp_coords = L_MYD05$L_locations_train,
 
 gp_model$set_optim_params(params = list(trace=TRUE,
                                         optimizer_cov="lbfgs",
-                                        estimate_aux_pars = FALSE,
+                                        estimate_aux_pars = TRUE,
                                         init_coef=betas_init,
-                                        init_aux_pars=init_shape,
                                         cg_preconditioner_type = "Sigma_inv_plus_BtWB"))
 
-gp_model$fit(y=L_MYD05$L_vapor_train, X = L_MYD05$L_X_train)
+gp_model$fit(y=M_MYD05$M_vapor_train, X = M_MYD05$M_X_train)
 
 #Estimates
 estimates <- list()
 (estimates$betas  <- gp_model$get_coef())
 (estimates$cov_pars <- gp_model$get_cov_pars())
-(estimates$alpha <- init_shape)
+(estimates$alpha <- gp_model$get_aux_pars())
 
 ################################################################################
 # Prediction
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-L_MYD05 <- readRDS("../../data_sets/MYD05/L_MYD05.rds")
+L_MYD05 <- readRDS("../../data/MYD05/L_MYD05.rds")
 
 L_X_train_betas <- c(L_MYD05$L_X_train %*% estimates$betas)
 L_X_test_betas <- c(L_MYD05$L_X_test %*% estimates$betas)
@@ -88,7 +84,7 @@ pred_response_var <- exp(2*pred_latent_gp_model$mu+2*pred_latent_gp_model$var)/e
 RMSE <- sqrt(mean((pred_response_mu-L_MYD05$L_vapor_test)^2))
 
 #CRPS: Latent Prediction
-pred_latent_mu <- pred_latent_gp_model$mu #fixed effects included
+pred_latent_mu <- pred_latent_gp_model$mu #fixed effects included.
 pred_latent_sd <- sqrt(pred_latent_gp_model$var)
 
 n_samples <- 100 #number of samples
@@ -102,9 +98,10 @@ for(s in 1:n_samples){
 }
 
 CRPS <- mean(scoringRules::crps_sample(y = L_MYD05$L_vapor_test, dat = sample_mat))
-  
+
+################################################################################
 saveRDS(list(estimates=estimates,
              pred_response_mu=pred_response_mu,
              pred_response_var=pred_response_var,
              RMSE=RMSE,
-             CRPS=CRPS), "./data/IterativeVL_25e4.rds")
+             CRPS=CRPS), "./IterativeVL.rds")

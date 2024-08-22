@@ -6,7 +6,7 @@ library(gpboost)
 ################################################################################
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-NOAA <- readRDS("../../data_sets/NOAA/NOAA.rds")
+NOAA <- readRDS("../../data/NOAA/NOAA.rds")
 
 #glm - for initial fixed effects
 glm_train <- glm(NOAA$Y_train ~ -1 + NOAA$X_train, family = Gamma(link = "log"))
@@ -72,8 +72,9 @@ for(s in 1:n_samples){
 
 CRPS <- mean(scoringRules::crps_sample(y = NOAA$Y_test, dat = sample_mat))
 
+################################################################################
 saveRDS(list(estimates=estimates,
              pred_response_mu=pred_response_mu,
              pred_response_var=pred_response_var,
              RMSE=RMSE,
-             CRPS=CRPS), "./data/FITC.rds")
+             CRPS=CRPS), "./FITC.rds")

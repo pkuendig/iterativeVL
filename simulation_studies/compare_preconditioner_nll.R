@@ -1,15 +1,15 @@
 ################################################################################
-# Preconditioner comparison based on likelihood
+# Compare VADU and LRAC based on marginal log-likelihood
 ################################################################################
 library(gpboost)
 
 ################################################################################
 #Generate data
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-source("./../../data_sets/simulated/make_data.R")
+source("./../data/simulated/make_data.R")
 
 sigma2_true <- 1
-rho_true <- 1/20
+rho_true <- 0.05 #other ranges considered: 0.01, 0.25
 true_covpars <- c(sigma2_true, rho_true)
 n <- 100000
 NN <- 20
@@ -44,7 +44,7 @@ for(p in 1:length(PRECONDITIONER)){
       
       Itmodel <- GPModel(gp_coords = mydata$coords,
                          cov_function = "matern",
-                         cov_fct_shape = 1.5,
+                         cov_fct_shape=1.5,
                          likelihood="bernoulli_logit",
                          matrix_inversion_method = "iterative",
                          gp_approx = "vecchia",
@@ -62,7 +62,6 @@ for(p in 1:length(PRECONDITIONER)){
       Itresults$time[i] <- system.time(Itresults$negLL[i] <- Itmodel$neg_log_likelihood(cov_pars=true_covpars, y=mydata$y))[3]
       
       i = i+1
-      saveRDS(list(VLresult=VLresult, VLtime=VLtime, Itresults=Itresults), "./data/findMode.rds")
       gc()
     }
   }
@@ -85,4 +84,38 @@ VLmodel$set_optim_params(params = list(maxit=1,
 
 VLtime <- system.time(VLresult <- VLmodel$neg_log_likelihood(cov_pars=true_covpars, y=mydata$y))[3]
 
-saveRDS(list(VLresult=VLresult, VLtime=VLtime, Itresults=Itresults), "./data/findMode.rds")
+################################################################################
+# Plotting
+################################################################################
+
+library(ggplot2)
+library(grid)
+
+#Renaming
+Itresults$preconditioner[Itresults$preconditioner=="Sigma_inv_plus_BtWB"] <- "P[VADU]"
+Itresults$preconditioner[Itresults$preconditioner=="piv_chol_on_Sigma"] <- "P[LRAC]"
+Itresults$preconditioner <- factor(Itresults$preconditioner, levels = c("P[VADU]", "P[LRAC]"), ordered=TRUE)
+Itresults$t <- as.factor(Itresults$t)
+
+p1 <- ggplot(Itresults, aes(x=t, y=negLL, fill=preconditioner)) + 
+  geom_hline(yintercept=VLresult, linetype = "dashed") +  
+  geom_boxplot() + labs(fill  = "") + ylab("log-likelihood") +
+  scale_fill_brewer(type = "qual", palette=6, labels = scales::parse_format()) +
+  theme_bw() + theme(axis.title.x=element_blank(), 
+                     axis.text.x=element_blank(), 
+                     axis.ticks.x=element_blank(), 
+                     legend.position = "top", 
+                     axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0))) + 
+  guides(fill = guide_legend(nrow = 1, byrow = TRUE)) + scale_y_continuous()
+
+p2 <- ggplot(Itresults, aes(x=t, y=time, color=preconditioner, shape=preconditioner)) +
+  stat_summary(aes(group = preconditioner), fun = mean, geom = 'line', size=1, alpha=0.9) + 
+  stat_summary(aes(group = preconditioner), fun = mean, geom = 'point', size=2) +
+  scale_color_brewer(type = "qual", palette=6) +labs(color = "") + 
+  scale_shape_manual(values = c(3,1), labels = scales::parse_format()) +
+  theme_bw() + theme(legend.position = "none", axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0))) +
+  ylab("Time (s)")
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(p1), 
+                ggplotGrob(p2), size = "first"))

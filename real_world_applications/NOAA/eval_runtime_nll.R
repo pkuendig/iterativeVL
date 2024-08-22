@@ -5,7 +5,7 @@ library(GPvecchia)
 # Runtime for likelihood evaluation on training data set
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-NOAA <- readRDS("../../data_sets/NOAA/NOAA.rds")
+NOAA <- readRDS("../../data/NOAA/NOAA.rds")
 
 set.seed(2)
 
@@ -114,7 +114,6 @@ runtime_results$time_negLL[i] <- system.time(mll <- vecchia_laplace_likelihood(y
 
 runtime_results$model[i] <- "GPVecchia"
 runtime_results$mll[i] <- mll
-i <- i + 1
 
 #############################################################################
-saveRDS(runtime_results, "./data/runtime.rds")
+saveRDS(runtime_results, "./runtime.rds")

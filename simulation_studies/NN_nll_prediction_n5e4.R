@@ -1,31 +1,31 @@
 ################################################################################
-# Estimation and prediction for different NN for Iterative-VL + GPVecchia
-# Comparison with Laplace model: Consider simulation results from estimation_prediction_n5e3.R
+# Prediction accuracy and marginal log-likelihood for different 
+# numbers of nearest neighbors (NN) for the Vecchia(-Laplace) approximation.
+# Considered models: Iterative-VL | GPVecchia (v0.1.7)
+# Sample size: n=n_p=50'000
 ################################################################################
 
 library(gpboost)
 library(GPvecchia)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-source("./../data_sets/simulated/make_data.R")
+source("./../data/simulated/make_data.R")
 
-n <- 5000
-n_rep <- 100
+n <- 50000
+n_rep <- 50
 sigma2_true <- 1
 rho_true <- 1/20
 true_covpars <- c(sigma2_true, rho_true)
 NN <- c(10,20,40,60)
-init_cov_pars <- c(1.0000000, 0.1911457) #model_iterative_VL$get_optim_params()$init_cov_pars
 
-res_cols <- c("NN", "sigma2", "rho", "time_negLL", "negLL_at_true_covpars", "num_optim_iter", 
+res_cols <- c("NN","time_negLL", "negLL_at_true_covpars",
               "RMSE_latent_mu", "log_score", "number_of_errors", "number_of_neg_pred_var")
 results_iterative_VL <- data.frame(matrix(nrow=length(NN)*n_rep, ncol = length(res_cols)))
 colnames(results_iterative_VL) <- res_cols
 results_GPVecchia <- results_iterative_VL
 results_GPVecchia$number_of_errors <- 0
-results_GPVecchia$number_of_neg_pred_var <- 0
 
-i <- 1 #counter data set seed (for same seed as in Laplace model)
+i <- 1 #counter data set seed
 k <- 1 #counter to store results
 for(r in 1:n_rep){
   
@@ -54,17 +54,12 @@ for(r in 1:n_rep){
   b_test <- mydata$b[i_test]
 
   ############################################################################
-  # For different NN: Model Estimation + Prediction on Test Set
+  # For different NN: Prediction on Test Set
   ############################################################################
   for(j in 1:length(NN)){
     
-    ##Iterative-VL############################################################
-    # cg_delta_conv = 1e-2
-    # num_rand_vec_trace = 50
-    # cg_preconditioner_type = "Sigma_inv_plus_BtWB"
-    # nsim_var_pred = 2000 
+    ##Iterative-VL#########################################################
     
-    ##Estimation
     model_iterative_VL <- GPModel(gp_coords = coords_train,
                                   cov_function = "matern",
                                   cov_fct_shape=1.5,
@@ -74,20 +69,13 @@ for(r in 1:n_rep){
                                   vecchia_ordering = "random",
                                   num_neighbors=NN[j])
     
-    model_iterative_VL$set_optim_params(params = list(maxit=1000,
-                                                       trace=TRUE,
-                                                       cg_max_num_it=10000,
-                                                       cg_max_num_it_tridiag=10000,
-                                                       init_cov_pars = init_cov_pars,
-                                                       cg_preconditioner_type = "Sigma_inv_plus_BtWB",
-                                                       seed_rand_vec_trace = k))
     
-    model_iterative_VL$fit(y=y_train)
-    
+    model_iterative_VL$set_optim_params(params = list(trace=TRUE,
+                                                      cg_max_num_it=100000,
+                                                      cg_max_num_it_tridiag=100000,
+                                                      cg_preconditioner_type = "Sigma_inv_plus_BtWB",
+                                                      seed_rand_vec_trace = k))
     results_iterative_VL$NN[k] <- NN[j]
-    results_iterative_VL$num_optim_iter[k] <- model_iterative_VL$get_num_optim_iter()
-    results_iterative_VL$sigma2[k] <- model_iterative_VL$get_cov_pars()[1]
-    results_iterative_VL$rho[k] <- model_iterative_VL$get_cov_pars()[2]
     
     ##Prediction
     model_iterative_VL$set_prediction_data(vecchia_pred_type = "latent_order_obs_first_cond_obs_only",
@@ -95,10 +83,12 @@ for(r in 1:n_rep){
                                            nsim_var_pred = 2000)
     
     prediction_iterative_VL <- predict(model_iterative_VL,
-                                        gp_coords_pred=as.matrix(coords_test),
-                                        predict_var = TRUE,
-                                        predict_cov_mat = FALSE,
-                                        predict_response = FALSE)
+                                       y=y_train,
+                                       cov_pars=true_covpars,
+                                       gp_coords_pred=as.matrix(coords_test),
+                                       predict_var = TRUE,
+                                       predict_cov_mat = FALSE,
+                                       predict_response = FALSE)
     
     results_iterative_VL$RMSE_latent_mu[k] <- sqrt(mean((prediction_iterative_VL$mu-b_test)^2))
     results_iterative_VL$log_score[k] <- -sum(dnorm(b_test, prediction_iterative_VL$mu, sqrt(prediction_iterative_VL$var), log = TRUE))
@@ -109,21 +99,20 @@ for(r in 1:n_rep){
     
     ##GPVecchia##################################################################
     
-    ##Estimation
-    vecchia.approx <- vecchia_specify(coords_train, m=NN[j], cond.yz = "zy") #for posterior #RF ordering, cond.yz = "zy", ordering = "maxmin"
-    vecchia.approx.IW <- vecchia_specify(coords_train, m=NN[j]) #for integrated likelihood #IW ordering, cond.yz = "SGV", ordering = "maxmin"
+    vecchia.approx <- vecchia_specify(coords_train, m=NN[j], cond.yz = "zy") #for posterior
+    vecchia.approx.IW <- vecchia_specify(coords_train, m=NN[j]) #for integrated likelihood
     
     GPVecchia_mll <- function(cov_pars){
       covparms <- c(exp(cov_pars[1]), exp(cov_pars[2])/sqrt(2*1.5), 1.5) #sigma^2, range, smoothness -> range is divided by sqrt(2*smoothness) such that Matern covariance is identical with GPModel
       
       n_mll <- tryCatch({
         -vecchia_laplace_likelihood(y_train,
-                                   vecchia.approx,
-                                   likelihood_model="logistic",
-                                   covmodel = "matern",
-                                   covparms = covparms,
-                                   return_all = FALSE,
-                                   vecchia.approx.IW=vecchia.approx.IW)
+                                    vecchia.approx,
+                                    likelihood_model="logistic",
+                                    covmodel = "matern",
+                                    covparms = covparms,
+                                    return_all = FALSE,
+                                    vecchia.approx.IW=vecchia.approx.IW)
       }, error = function(err) {
         results_GPVecchia$number_of_errors[k] <<- results_GPVecchia$number_of_errors[k] + 1 
         return(Inf)
@@ -134,19 +123,10 @@ for(r in 1:n_rep){
     
     results_GPVecchia$NN[k] <- NN[j]
     
-    opt <- optim(par = log(init_cov_pars), fn = GPVecchia_mll, method = "Nelder-Mead",
-                 control = list("trace" = 4, "maxit" = 1000))
-    
-    final_covparms <- c(exp(opt$par[1]), exp(opt$par[2])/sqrt(2*1.5), 1.5)
-    
-    results_GPVecchia$num_optim_iter[k] <- opt$counts[1]
-    results_GPVecchia$sigma2[k] <- exp(opt$par[1])
-    results_GPVecchia$rho[k] <- exp(opt$par[2])
-    
     ##Prediction
-    post_zy <- calculate_posterior_VL(y_train, vecchia.approx, "logistic", final_covparms)
+    post_zy <- calculate_posterior_VL(y_train, vecchia.approx, "logistic", c(true_covpars[1], true_covpars[2]/sqrt(2*1.5), 1.5)) 
     vecchia.approx.train.test <- vecchia_specify(coords_train, m=NN[j], locs.pred=coords_test)
-    preds_test <- vecchia_laplace_prediction(post_zy, vecchia.approx.train.test, final_covparms)
+    preds_test <- vecchia_laplace_prediction(post_zy, vecchia.approx.train.test, c(true_covpars[1], true_covpars[2]/sqrt(2*1.5), 1.5))
     
     results_GPVecchia$RMSE_latent_mu[k] <- sqrt(mean((preds_test$mu.pred-b_test)^2))
     
@@ -158,12 +138,53 @@ for(r in 1:n_rep){
     
     #Likelihood at true parameters
     results_GPVecchia$time_negLL[k] <- system.time(results_GPVecchia$negLL_at_true_covpars[k] <- GPVecchia_mll(log(true_covpars)))[3]
-    k <- k + 1 #counter to store results
+    
+    ############################################################################
+    k <- k + 1
     gc()
   }  
   #############################################################################
-  i <- i + 1 #data set seed counter
-  
-  saveRDS(list(results_iterative_VL = results_iterative_VL,
-               results_GPVecchia = results_GPVecchia), "./data/NN_estimation_prediction_n5e3.rds")
+  i <- i + 1
 }
+
+############################################################################
+# Plotting
+############################################################################
+library(ggplot2)
+library(grid)
+library(tidyr)
+
+results_iterative_VL$model <- "Iterative-VL"
+results_GPVecchia$model <- "GPVecchia"
+results_GPVecchia$log_score <- NA #no plotting because of negative predictive variances
+results <- rbind(results_iterative_VL, results_GPVecchia)
+results$model <- factor(results$model, levels = c("Iterative-VL", "GPVecchia"), ordered=TRUE)
+
+results_long <- gather(results, key="key", value="value", c("negLL_at_true_covpars", "time_negLL", "RMSE_latent_mu", "log_score"))
+results_long$key <- factor(results_long$key, levels = c("negLL_at_true_covpars", "time_negLL", "RMSE_latent_mu", "log_score"), ordered=TRUE)
+
+#labeling
+labels <- list(
+  'negLL_at_true_covpars'="likelihood",
+  'time_negLL'="Time (s) for likelihood",
+  'RMSE_latent_mu'="RMSE",
+  'log_score'="LS"
+)
+my_labeller <- function(variable,value){
+  return(labels[value])
+}
+
+my_colors <- RColorBrewer::brewer.pal(6,"Set1")[3:4]
+options(scipen = 999)
+
+ggplot(results_long, aes(x=NN, y=value, color=model)) + 
+  stat_summary(fun = mean, geom="line", linewidth=1) +
+  stat_summary(fun = mean,
+               geom = "errorbar",
+               linewidth=1,
+               width = 1.5,
+               fun.max = function(x) mean(x) + 2*sd(x) / sqrt(length(x)),
+               fun.min = function(x) mean(x) - 2*sd(x) / sqrt(length(x))) + 
+  facet_wrap(~key, scales = "free_y", nrow = 2, labeller = my_labeller) + labs(color = "") + 
+  scale_color_manual(values = my_colors) +
+  theme_bw() + theme(legend.position = "top") + ylab("") + xlab("m")

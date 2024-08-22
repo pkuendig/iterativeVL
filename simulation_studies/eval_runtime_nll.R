@@ -1,13 +1,13 @@
 ################################################################################
-# Runtime for likelihood
-# Compare models: Laplace | Cholesky-VL | Iterative-VL | GPVeccia
+# Runtime analysis for marginal likelihood
+# Considered models: Laplace | Cholesky-VL | Iterative-VL | GPVeccia
 ################################################################################
 
 library(gpboost)
 library(GPvecchia)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-source("./../data_sets/simulated/make_data.R")
+source("./../data/simulated/make_data.R")
 
 N <- c(1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000)
 sigma2_true <- 1
@@ -93,9 +93,6 @@ for(q in 1:length(N)){
   i <- i + 1
   
   ##Iterative-VL################################################################
-  # cg_delta_conv = 1e-2
-  # num_rand_vec_trace = 50
-  # cg_preconditioner_type = "Sigma_inv_plus_BtWB"
   
   model_VL_CG <- GPModel(gp_coords = coords_train,
                          cov_function = "matern",
@@ -140,7 +137,23 @@ for(q in 1:length(N)){
   runtime_results$n[i] <- n
   runtime_results$model[i] <- "GPVecchia"
   i <- i + 1
-  #############################################################################
-  saveRDS(runtime_results, "./data/runtime_results.rds")
+
   gc()
 }
+
+############################################################################
+# Plotting
+############################################################################
+library(ggplot2)
+
+runtime_results$model <- factor(runtime_results$model, levels = c("Laplace", "Cholesky-VL", "Iterative-VL", "GPVecchia"), ordered=TRUE)
+
+options(scipen = 999)
+ggplot(runtime_results[!is.na(runtime_results$time),], aes(x=n, y=time_negLL, color=model, shape=model)) + 
+  geom_line(linewidth=1) + geom_point(size=2) + labs(color = "") + 
+  scale_y_sqrt(breaks=c(0.1,1,2,5,10,20,40,60,80,200,400)) + 
+  scale_x_sqrt(breaks=c(1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000)) +
+  ylab("Time (s)") +
+  scale_shape_manual(values = c(3,1,16,17), name = "legend") + 
+  scale_color_manual(values = RColorBrewer::brewer.pal(4,"Set1")[1:4], name = "legend") +
+  theme_bw() + theme(legend.position = "top", legend.title=element_blank(), axis.text.x = element_text(angle = 45, hjust=1))

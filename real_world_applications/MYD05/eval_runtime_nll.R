@@ -6,7 +6,7 @@ library(GPvecchia)
 ################################################################################
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-L_MYD05 <- readRDS("../../data_sets/MYD05/L_MYD05.rds")
+L_MYD05 <- readRDS("../../data/MYD05/L_MYD05.rds")
 n_MYD05 <- length(L_MYD05$L_vapor_train)
 
 set.seed(2)
@@ -40,7 +40,7 @@ for(q in 1:length(N)){
   X_train <- L_MYD05$L_X_train[s,]
   
   ##############################################################################
-  #glm for fixed effects
+  # glm for fixed effects
   ##############################################################################
   
   glm_train <- glm(y_train ~ -1 + X_train, family = Gamma(link = "log"))
@@ -66,7 +66,7 @@ for(q in 1:length(N)){
                                                                                       fixed_effects = fixed_effects))[3]
   
   runtime_results$n[i] <- n
-  runtime_results$model[i] <- "Cholesky-VL"
+  runtime_results$model[i] <- "CholeskyVL"
   runtime_results$mll[i] <- mll
   i <- i + 1
   
@@ -88,7 +88,7 @@ for(q in 1:length(N)){
                                                                                     fixed_effects = fixed_effects))[3]
   
   runtime_results$n[i] <- n
-  runtime_results$model[i] <- "Iterative-VL"
+  runtime_results$model[i] <- "IterativeVL"
   runtime_results$mll[i] <- mll
   i <- i + 1
   
@@ -132,8 +132,8 @@ for(q in 1:length(N)){
   runtime_results$model[i] <- "GPVecchia"
   runtime_results$mll[i] <- mll
   i <- i + 1
-  
-  #############################################################################
-  saveRDS(runtime_results, "./data/runtime.rds")
   gc()
 }
+
+################################################################################
+saveRDS(runtime_results, "./runtime.rds")

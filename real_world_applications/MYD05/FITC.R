@@ -2,10 +2,10 @@ library(fields)
 library(gpboost)
 
 ################################################################################
-# Iterative-VL: Estimation on subsample
+# LowRank (FITC): Estimation on subsample
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-M_MYD05 <- readRDS("../../data_sets/MYD05/M_MYD05.rds")
+M_MYD05 <- readRDS("../../data/MYD05/M_MYD05.rds")
 
 #glm - for initial fixed effects
 glm_train <- glm(M_MYD05$M_vapor_train ~ -1 + M_MYD05$M_X_train, family = Gamma(link = "log"))
@@ -16,16 +16,14 @@ gp_model <- GPModel(gp_coords = M_MYD05$M_locations_train,
                     cov_function = "matern",
                     likelihood="gamma",
                     cov_fct_shape=1.5,
-                    matrix_inversion_method = "iterative",
-                    gp_approx = "vecchia",
-                    vecchia_ordering = "random",
-                    num_neighbors=20)
+                    matrix_inversion_method = "cholesky",
+                    gp_approx = "fitc",
+                    num_ind_points=500)
 
 gp_model$set_optim_params(params = list(trace=TRUE,
                                         optimizer_cov="lbfgs",
                                         estimate_aux_pars = TRUE,
-                                        init_coef=betas_init,
-                                        cg_preconditioner_type = "Sigma_inv_plus_BtWB"))
+                                        init_coef=betas_init))
 
 gp_model$fit(y=M_MYD05$M_vapor_train, X = M_MYD05$M_X_train)
 
@@ -39,7 +37,7 @@ estimates <- list()
 # Prediction
 ################################################################################
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-L_MYD05 <- readRDS("../../data_sets/MYD05/L_MYD05.rds")
+L_MYD05 <- readRDS("../../data/MYD05/L_MYD05.rds")
 
 L_X_train_betas <- c(L_MYD05$L_X_train %*% estimates$betas)
 L_X_test_betas <- c(L_MYD05$L_X_test %*% estimates$betas)
@@ -48,20 +46,14 @@ gp_model <- GPModel(gp_coords = L_MYD05$L_locations_train,
                     cov_function = "matern",
                     likelihood="gamma",
                     cov_fct_shape=1.5,
-                    matrix_inversion_method = "iterative",
-                    gp_approx = "vecchia",
-                    vecchia_ordering = "random",
-                    num_neighbors = 20)
+                    matrix_inversion_method = "cholesky",
+                    gp_approx = "fitc",
+                    num_ind_points=500)
 
 gp_model$set_optim_params(params = list(trace=TRUE,
                                         optimizer_cov="lbfgs",
                                         init_coef = estimates$betas,
-                                        init_aux_pars = estimates$alpha,
-                                        cg_preconditioner_type = "Sigma_inv_plus_BtWB"))
-
-gp_model$set_prediction_data(vecchia_pred_type = "latent_order_obs_first_cond_obs_only",
-                             num_neighbors_pred = 20,
-                             nsim_var_pred = 1000)
+                                        init_aux_pars = estimates$alpha))
 
 pred_latent_gp_model <- predict(gp_model,
                                 y = L_MYD05$L_vapor_train,
@@ -98,9 +90,10 @@ for(s in 1:n_samples){
 }
 
 CRPS <- mean(scoringRules::crps_sample(y = L_MYD05$L_vapor_test, dat = sample_mat))
-  
+
+################################################################################
 saveRDS(list(estimates=estimates,
              pred_response_mu=pred_response_mu,
              pred_response_var=pred_response_var,
              RMSE=RMSE,
-             CRPS=CRPS), "./data/IterativeVL.rds")
+             CRPS=CRPS), "./FITC.rds")
